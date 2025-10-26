@@ -16,7 +16,7 @@ const router = express.Router();
 const planningController = require('../controllers/planningController');
 
 // ✅ FIXED: remove the extra '/planning'
-router.post('/save', planningController.savePlanning);
+router.post('/planning/save', planningController.savePlanning);
 router.get('/', planningController.getPlanning);
 router.put('/assignment', planningController.updatePlanningAssignment);
 router.delete('/', planningController.deletePlanning);

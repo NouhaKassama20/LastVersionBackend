@@ -1,5 +1,111 @@
 const db = require('../db');
 
+// exports.savePlanning = (req, res) => {
+//   const { plan_date, assignments } = req.body;
+  
+//   if (!plan_date) {
+//     return res.status(400).json({ error: "Plan date is required" });
+//   }
+
+//   console.log('💾 Saving planning for date:', plan_date);
+  
+//   db.beginTransaction((err) => {
+//     if (err) {
+//       console.error('❌ Transaction error:', err);
+//       return res.status(500).json({ error: err.message });
+//     }
+
+//     // First, get the actual shift_ids and task_ids from the database
+//     getShiftAndTaskIds((err, { shifts, tasks }) => {
+//       if (err) {
+//         return db.rollback(() => {
+//           res.status(500).json({ error: err.message });
+//         });
+//       }
+
+//       // Validate and transform assignments
+//       const validAssignments = validateAndTransformAssignments(assignments, shifts, tasks);
+      
+//       if (validAssignments.error) {
+//         return db.rollback(() => {
+//           res.status(400).json({ error: validAssignments.error });
+//         });
+//       }
+
+//       // Delete existing planning for this date
+//       db.query('DELETE FROM planning WHERE plan_date = ?', [plan_date], (err, result) => {
+//         if (err) {
+//           return db.rollback(() => {
+//             console.error('❌ Delete error:', err);
+//             res.status(500).json({ error: err.message });
+//           });
+//         }
+
+//         console.log('✅ Cleared existing planning for date:', plan_date);
+
+//         // If no valid assignments, commit empty planning
+//         if (validAssignments.data.length === 0) {
+//           return db.commit((err) => {
+//             if (err) {
+//               return db.rollback(() => {
+//                 console.error('❌ Commit error:', err);
+//                 res.status(500).json({ error: err.message });
+//               });
+//             }
+//             console.log('✅ Planning saved successfully (empty planning)');
+//             res.json({ message: "✅ Planning saved successfully", date: plan_date, assignments_count: 0 });
+//           });
+//         }
+
+//         // Insert valid assignments
+//         const values = validAssignments.data.map(assignment => [
+//           assignment.shift_id,
+//           assignment.emp_id,
+//           assignment.task_id,
+//           plan_date
+//         ]);
+
+//         const query = 'INSERT INTO planning (shift_id, emp_id, task_id, plan_date) VALUES ?';
+        
+//         db.query(query, [values], (err, result) => {
+//           if (err) {
+//             return db.rollback(() => {
+//               console.error('❌ Insert error:', err);
+//               res.status(500).json({ error: err.message });
+//             });
+//           }
+
+//           db.commit((err) => {
+//             if (err) {
+//               return db.rollback(() => {
+//                 console.error('❌ Commit error:', err);
+//                 res.status(500).json({ error: err.message });
+//               });
+//             }
+
+//             console.log('✅ Planning saved successfully. Assignments:', result.affectedRows);
+//             res.json({ 
+//               message: "✅ Planning saved successfully", 
+//               date: plan_date, 
+//               assignments_count: result.affectedRows 
+//             });
+//           });
+//         });
+//       });
+//     });
+//   });
+// };
+// ✅ Helper function to clean up task_id and ensure numeric values
+function sanitizeAssignments(assignments) {
+  return assignments
+    .filter(a => a.emp_id && a.shift_id !== undefined) // only keep valid entries
+    .map(a => ({
+      shift_id: Number(a.shift_id) || null,
+      emp_id: Number(a.emp_id),
+      task_id: isNaN(a.task_id) ? null : Number(a.task_id),
+    }));
+}
+
 exports.savePlanning = (req, res) => {
   const { plan_date, assignments } = req.body;
   
@@ -8,87 +114,68 @@ exports.savePlanning = (req, res) => {
   }
 
   console.log('💾 Saving planning for date:', plan_date);
-  
-  db.beginTransaction((err) => {
+  console.log('📋 Received assignments:', assignments);
+
+  // Clean and validate incoming data
+  const cleanAssignments = sanitizeAssignments(assignments);
+
+  db.beginTransaction(err => {
     if (err) {
       console.error('❌ Transaction error:', err);
       return res.status(500).json({ error: err.message });
     }
 
-    // First, get the actual shift_ids and task_ids from the database
-    getShiftAndTaskIds((err, { shifts, tasks }) => {
+    // 1️⃣ Delete existing planning for this date
+    db.query('DELETE FROM planning WHERE plan_date = ?', [plan_date], (err) => {
       if (err) {
         return db.rollback(() => {
+          console.error('❌ Delete error:', err);
           res.status(500).json({ error: err.message });
         });
       }
 
-      // Validate and transform assignments
-      const validAssignments = validateAndTransformAssignments(assignments, shifts, tasks);
-      
-      if (validAssignments.error) {
-        return db.rollback(() => {
-          res.status(400).json({ error: validAssignments.error });
+      console.log('✅ Cleared existing planning for date:', plan_date);
+      console.log('✅ Cleared existing planning', cleanAssignments);
+
+      // 2️⃣ If no assignments to insert, commit empty planning
+      if (cleanAssignments.length === 0) {
+        return db.commit(err => {
+          if (err) {
+            return db.rollback(() => {
+              console.error('❌ Commit error:', err);
+              res.status(500).json({ error: err.message });
+            });
+          }
+          console.log('✅ No assignments to insert — empty planning saved');
+          res.json({ message: "✅ Empty planning saved", date: plan_date });
         });
       }
 
-      // Delete existing planning for this date
-      db.query('DELETE FROM planning WHERE plan_date = ?', [plan_date], (err, result) => {
+      // 3️⃣ Insert the new planning data
+      const values = cleanAssignments.map(a => [a.shift_id, a.emp_id, a.task_id, plan_date]);
+      const insertQuery = 'INSERT INTO planning (shift_id, emp_id, task_id, plan_date) VALUES ?';
+
+      db.query(insertQuery, [values], (err, result) => {
         if (err) {
           return db.rollback(() => {
-            console.error('❌ Delete error:', err);
+            console.error('❌ Insert error:', err);
             res.status(500).json({ error: err.message });
           });
         }
 
-        console.log('✅ Cleared existing planning for date:', plan_date);
-
-        // If no valid assignments, commit empty planning
-        if (validAssignments.data.length === 0) {
-          return db.commit((err) => {
-            if (err) {
-              return db.rollback(() => {
-                console.error('❌ Commit error:', err);
-                res.status(500).json({ error: err.message });
-              });
-            }
-            console.log('✅ Planning saved successfully (empty planning)');
-            res.json({ message: "✅ Planning saved successfully", date: plan_date, assignments_count: 0 });
-          });
-        }
-
-        // Insert valid assignments
-        const values = validAssignments.data.map(assignment => [
-          assignment.shift_id,
-          assignment.emp_id,
-          assignment.task_id,
-          plan_date
-        ]);
-
-        const query = 'INSERT INTO planning (shift_id, emp_id, task_id, plan_date) VALUES ?';
-        
-        db.query(query, [values], (err, result) => {
+        db.commit(err => {
           if (err) {
             return db.rollback(() => {
-              console.error('❌ Insert error:', err);
+              console.error('❌ Commit error:', err);
               res.status(500).json({ error: err.message });
             });
           }
 
-          db.commit((err) => {
-            if (err) {
-              return db.rollback(() => {
-                console.error('❌ Commit error:', err);
-                res.status(500).json({ error: err.message });
-              });
-            }
-
-            console.log('✅ Planning saved successfully. Assignments:', result.affectedRows);
-            res.json({ 
-              message: "✅ Planning saved successfully", 
-              date: plan_date, 
-              assignments_count: result.affectedRows 
-            });
+          console.log(`✅ Planning saved successfully: ${result.affectedRows} rows inserted.`);
+          res.json({
+            message: "✅ Planning saved successfully",
+            date: plan_date,
+            assignments_count: result.affectedRows,
           });
         });
       });
